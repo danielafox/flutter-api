@@ -178,36 +178,52 @@ base_denied AS (
     WHERE section_name = 'Denied'
       AND DATE_TRUNC('year', created_at - INTERVAL '5 hours') >= DATE '2025-01-01'
 ),
+-- 🔹 Total instaladas
 total_instaladas AS (
     SELECT COUNT(DISTINCT gid) AS total_instaladas
     FROM base
     WHERE section_name = 'Installed'
       AND completed = true
 ),
+-- 🔹 Resumen mensual
 resumen_mensual AS (
     SELECT mes, COUNT(DISTINCT gid) AS instalaciones_x_mes
     FROM base
     WHERE section_name = 'Installed' AND completed = true
     GROUP BY mes
 ),
+-- 🔹 Resumen diario
 resumen_diario_total AS (
     SELECT fecha, COUNT(DISTINCT gid) AS instalaciones_x_dia
     FROM base
     WHERE section_name = 'Installed' AND completed = true
     GROUP BY fecha
 ),
+-- 🔹 Promedio mensual de instalaciones
+promedio_tabletas AS (
+    SELECT 
+        ROUND(
+            COUNT(DISTINCT gid)::numeric / COUNT(DISTINCT mes),
+            2
+        ) AS promedio_tabletas_mensual
+    FROM base
+    WHERE section_name = 'Installed' AND completed = true
+),
+-- 🔹 Mes con más instalaciones
 mes_top AS (
     SELECT mes, instalaciones_x_mes
     FROM resumen_mensual
     ORDER BY instalaciones_x_mes DESC
     LIMIT 1
 ),
+-- 🔹 Día con más instalaciones
 dia_top AS (
     SELECT fecha, instalaciones_x_dia
     FROM resumen_diario_total
     ORDER BY instalaciones_x_dia DESC
     LIMIT 1
 ),
+-- 🔹 Persona con más instalaciones
 persona_overall AS (
     SELECT assigne_name, COUNT(DISTINCT gid) AS total_instalaciones
     FROM base
@@ -217,15 +233,7 @@ persona_overall AS (
     ORDER BY total_instalaciones DESC
     LIMIT 1
 ),
-estado_top AS (
-    SELECT country, COUNT(DISTINCT gid) AS total_instalaciones
-    FROM base
-    WHERE section_name = 'Installed' AND completed = true
-    GROUP BY country
-    ORDER BY total_instalaciones DESC
-    LIMIT 1
-),
--- 🔹 Total denegadas usando base_denied
+-- 🔹 Total denegadas
 total_denegadas AS (
     SELECT COUNT(DISTINCT gid) AS total_denegadas
     FROM base_denied
@@ -259,29 +267,28 @@ total_team AS (
       AND team = 'Product Launch'
 )
 SELECT
-    ti.total_instaladas                AS total_installed,
-    TO_CHAR(mes_top.mes,'YYYY-MM')     AS mes_mas_instalaciones,
-    mes_top.instalaciones_x_mes        AS total_mes_top,
-    dia_top.fecha                      AS dia_mas_instalaciones,
-    dia_top.instalaciones_x_dia        AS total_instalaciones_dia,
-    persona_overall.assigne_name       AS persona_top,
+    ti.total_instaladas                 AS total_installed,
+    TO_CHAR(mes_top.mes,'YYYY-MM')      AS mes_top,
+    mes_top.instalaciones_x_mes         AS total_mes_top,
+    dia_top.fecha                       AS day_top,
+    dia_top.instalaciones_x_dia         AS total_day_top,
+    persona_overall.assigne_name        AS persona_top,
     persona_overall.total_instalaciones AS total_persona_top,
-    et.country                         AS estado_top,
-    et.total_instalaciones             AS total_estado_top,
-    td.total_denegadas                 AS total_denegadas,
-    mt.denied_reason                   AS motivo_mas_comun,
-    mt.total_motivo                    AS total_motivo_mas_comun,
-    mgr.manager_name                   AS manager,
-    tt.total_team                      AS total_team
+    td.total_denegadas                  AS total_denied,
+    mt.denied_reason                    AS common_reason,
+    mt.total_motivo                     AS total_reason,
+    mgr.manager_name                    AS manager,
+    tt.total_team                       AS total_team,
+    pt.promedio_tabletas_mensual        AS avg_mes
 FROM total_instaladas ti
 CROSS JOIN mes_top
 CROSS JOIN dia_top
 CROSS JOIN persona_overall
-CROSS JOIN estado_top et
 CROSS JOIN total_denegadas td
 CROSS JOIN motivo_top mt
 LEFT JOIN managers mgr ON mgr.team = 'Google Integration'
-CROSS JOIN total_team tt;
+CROSS JOIN total_team tt
+CROSS JOIN promedio_tabletas pt;
     """
     
     cur.execute(query)
