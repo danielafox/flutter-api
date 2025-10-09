@@ -34,7 +34,7 @@ def obtener_resumen_menus():
     cur = conn.cursor()
     
     query = """
-    WITH base AS (
+WITH base AS (
     SELECT
         gid,
         assigne_name,
@@ -160,21 +160,21 @@ periodo_datos AS (
 )
 -- 🔹 Selección final
 SELECT
-	pd.periodo,   
-	c.total_new_menu_done,
-    c.total_update_done,
-    pm.promedio_mes,
-    m.mes_mas_menus,
-    m.total_menus_mes_top,
-    w.semana_mas_menus,
-    w.total_menus_week_top,
-    d.dia_mas_menus,
-    d.total_menus_dia_top,
-    p.assigne_name AS persona_top,
-    p.total_menus_persona_top AS total_persona_top,
-    (s.Voluntario + s.Despido) AS total_rotation,
-    s.Voluntario,
-    s.Despido,
+ 	pd.periodo 						 AS period,
+    c.total_new_menu_done            AS total_new_menus,
+    c.total_update_done              AS total_updated_menus,
+    pm.promedio_mes                  AS monthly_average,
+    m.mes_mas_menus                  AS top_month_name,
+    m.total_menus_mes_top            AS top_month_total,
+    w.semana_mas_menus               AS top_week_name,
+    w.total_menus_week_top           AS top_week_total,
+    d.dia_mas_menus                  AS top_day_name,
+    d.total_menus_dia_top            AS top_day_total,
+    p.assigne_name                   AS top_person_name,
+    p.total_menus_persona_top        AS top_person_total,
+    (s.Voluntario + s.Despido)       AS total_rotation,
+    s.Voluntario                     AS voluntary,
+    s.Despido                        AS dismissal,
     mgr.manager_name AS manager,
     tf.total_team
 FROM conteos c
@@ -365,27 +365,27 @@ periodo_datos AS (
     FROM base
 )
 -- 🔹 Resultado final
-select
-	pd.periodo                          AS periodo,
-    ti.total_instaladas                 AS total_installed,
-    tip.total_in_progress               AS total_in_progress,
-    pt.promedio_tabletas_mensual        AS avg_mes,
-    m.mes_mas_instalaciones             AS mes_top,
-    m.instalaciones_x_mes               AS total_mes_top,
-    w.semana_mas_instalaciones          AS week_top,
-    w.instalaciones_x_week              AS total_week_top,
-    d.dia_mas_instalaciones             AS day_top,
-    d.instalaciones_x_dia               AS total_day_top,
-    td.total_denegadas                  AS total_denied,
-    mt.denied_reason                    AS common_reason,
-    mt.total_motivo                     AS total_reason,
-    persona_overall.assigne_name        AS persona_top,
-    persona_overall.total_instalaciones AS total_persona_top,
-    tii.total_no_activos                AS total_rotation,
-    tii.total_voluntarios               AS voluntario,
-    tii.total_despidos                  AS despido,
-    mgr.manager_name                    AS manager,
-    tii.total_activos					AS total_team
+SELECT
+    pd.periodo                             AS period,
+    ti.total_instaladas                    AS total_installed,
+    tip.total_in_progress                  AS total_in_progress,
+    pt.promedio_tabletas_mensual           AS monthly_average,
+    m.mes_mas_instalaciones                AS top_month_name,
+    m.instalaciones_x_mes                  AS top_month_total,
+    w.semana_mas_instalaciones             AS top_week_name,
+    w.instalaciones_x_week                 AS top_week_total,
+    d.dia_mas_instalaciones                AS top_day_name,
+    d.instalaciones_x_dia                  AS top_day_total,
+    td.total_denegadas                     AS total_denied,
+    mt.denied_reason                       AS common_denied_reason,
+    mt.total_motivo                        AS total_reason_count,
+    persona_overall.assigne_name           AS top_person_name,
+    persona_overall.total_instalaciones    AS top_person_total,
+    tii.total_no_activos                   AS total_rotation,
+    tii.total_voluntarios                  AS voluntary,
+    tii.total_despidos                     AS dismissal,
+    mgr.manager_name                       AS manager_name,
+    tii.total_activos                      AS total_team
 FROM total_instaladas ti
 CROSS JOIN total_in_progress tip
 CROSS JOIN mes_top m
