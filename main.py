@@ -35,103 +35,159 @@ def obtener_resumen_menus():
     
     query = """
     WITH base AS (
-        SELECT
+    SELECT
         gid,
         assigne_name,
         type_menu,
         section_name,
         (completed_at - INTERVAL '5 hours')::date AS fecha,
-        DATE_TRUNC('month', completed_at - INTERVAL '5 hours')::date AS mes
-        FROM asana_fulfillment_task aft
-        WHERE DATE_TRUNC('year', completed_at - INTERVAL '5 hours') >= DATE '2025-01-01'
-        ),
-        resumen_mensual AS (
-        SELECT mes, COUNT(*) AS menus_x_mes
-        FROM base
-        WHERE section_name = 'Done'
-        AND type_menu IN ('New Menu','Update')
-        GROUP BY mes
-        ),
-        resumen_diario AS (
-        SELECT fecha, COUNT(*) AS menus_x_dia
-        FROM base
-        WHERE section_name = 'Done'
-        AND type_menu IN ('New Menu','Update')
-        GROUP BY fecha
-        ),
-        conteos AS (
-        SELECT
+        DATE_TRUNC('month', completed_at - INTERVAL '5 hours')::date AS mes,
+        DATE_TRUNC('week', completed_at - INTERVAL '5 hours')::date AS semana
+    FROM asana_fulfillment_task aft
+    WHERE DATE_TRUNC('year', completed_at - INTERVAL '5 hours') >= DATE '2025-01-01'
+),
+-- 🔹 Menús por mes (solo New Menu)
+resumen_mensual AS (
+    SELECT mes, COUNT(*) AS menus_x_mes
+    FROM base
+    WHERE section_name = 'Done'
+      AND type_menu = 'New Menu'
+    GROUP BY mes
+),
+-- 🔹 Menús diarios (solo New Menu)
+resumen_diario AS (
+    SELECT fecha, COUNT(*) AS menus_x_dia
+    FROM base
+    WHERE section_name = 'Done'
+      AND type_menu = 'New Menu'
+    GROUP BY fecha
+),
+-- 🔹 Menús semanales (solo New Menu)
+resumen_semanal AS (
+    SELECT semana, COUNT(*) AS menus_x_week
+    FROM base
+    WHERE section_name = 'Done'
+      AND type_menu = 'New Menu'
+    GROUP BY semana
+),
+-- 🔹 Totales generales
+conteos AS (
+    SELECT
         COUNT(*) FILTER (WHERE type_menu = 'New Menu' AND section_name = 'Done') AS total_new_menu_done,
         COUNT(*) FILTER (WHERE type_menu = 'Update'   AND section_name = 'Done') AS total_update_done
-        FROM base
-        ),
-        persona_top AS (
-        SELECT assigne_name, COUNT(*) AS total_menus_persona_top
-        FROM base
-        WHERE section_name = 'Done'
-        AND type_menu IN ('New Menu','Update')
-        AND assigne_name IS NOT NULL
-        GROUP BY assigne_name
-        ORDER BY COUNT(*) DESC
-        LIMIT 1
-        ),
-        promedio_mes AS (
-        SELECT ROUND(AVG(menus_x_mes),2) AS promedio_mes
-        FROM resumen_mensual
-        ),
-        mes_top AS (
-        SELECT
-        TO_CHAR(mes,'YYYY-MM') AS mes_mas_menus,
+    FROM base
+),
+-- 🔹 Persona top
+persona_top AS (
+    SELECT assigne_name, COUNT(*) AS total_menus_persona_top
+    FROM base
+    WHERE section_name = 'Done'
+      AND type_menu IN ('New Menu','Update')
+      AND assigne_name IS NOT NULL
+    GROUP BY assigne_name
+    ORDER BY COUNT(*) DESC
+    LIMIT 1
+),
+-- 🔹 Promedio mensual
+promedio_mes AS (
+    SELECT ROUND(AVG(menus_x_mes),2) AS promedio_mes
+    FROM resumen_mensual
+),
+-- 🔹 Mes más top (solo New Menu)
+mes_top AS (
+    SELECT
+        TO_CHAR(mes, 'Mon YYYY') AS mes_mas_menus,
         menus_x_mes AS total_menus_mes_top
-        FROM resumen_mensual
-        ORDER BY menus_x_mes DESC
-        LIMIT 1
-        ),
-        dia_top AS (
-        SELECT
-        fecha AS dia_mas_menus,
+    FROM resumen_mensual
+    ORDER BY menus_x_mes DESC
+    LIMIT 1
+),
+-- 🔹 Día más top (solo New Menu)
+dia_top AS (
+    SELECT
+        TO_CHAR(fecha, 'DD - Mon - YYYY') AS dia_mas_menus,
         menus_x_dia AS total_menus_dia_top
-        FROM resumen_diario
-        ORDER BY menus_x_dia DESC
-        LIMIT 1
-        ),
-        managers AS (
-        SELECT
+    FROM resumen_diario
+    ORDER BY menus_x_dia DESC
+    LIMIT 1
+),
+-- 🔹 Semana más top (solo New Menu)
+week_top AS (
+    SELECT
+        TO_CHAR(semana, 'DD - Mon - YYYY') AS semana_mas_menus,
+        menus_x_week AS total_menus_week_top
+    FROM resumen_semanal
+    ORDER BY menus_x_week DESC
+    LIMIT 1
+),
+-- 🔹 Managers
+managers AS (
+    SELECT
         sir.name AS manager_name,
         sir.team,
         sir.department,
         sir.role
-        FROM sheets_ingresos_y_retiros sir
-        WHERE department = 'Operations'
-        AND team IN ('Fulfillment','Product Launch','Google Integration')
-        AND role LIKE('%Manager%')
-        ),
-        team_fulfillment AS (
-        SELECT COUNT(*) AS total_team
-        FROM sheets_ingresos_y_retiros sir
-        WHERE department = 'Operations'
-        AND team = 'Fulfillment'
-        )
-        SELECT
-        c.total_new_menu_done,
-        c.total_update_done,
-        p.assigne_name AS persona_top,
-        p.total_menus_persona_top AS total_persona_top,
-        pm.promedio_mes,
-        m.mes_mas_menus,
-        m.total_menus_mes_top,
-        d.dia_mas_menus,
-        d.total_menus_dia_top,
-        mgr.manager_name AS manager,
-        tf.total_team
-        FROM conteos c
-        CROSS JOIN persona_top p
-        LEFT JOIN managers mgr
-        ON mgr.team = 'Fulfillment'
-        CROSS JOIN promedio_mes pm
-        CROSS JOIN mes_top m
-        CROSS JOIN dia_top d
-        CROSS JOIN team_fulfillment tf;
+    FROM sheets_ingresos_y_retiros sir
+    WHERE department = 'Operations'
+      AND team IN ('Fulfillment','Product Launch','Google Integration')
+      AND role LIKE('%Manager%')
+),
+-- 🔹 Total equipo Fulfillment activo
+team_fulfillment AS (
+    SELECT COUNT(*) AS total_team
+    FROM sheets_ingresos_y_retiros sir
+    WHERE department = 'Operations'
+      AND team = 'Fulfillment'
+      AND status = 'Activo'
+      AND role <> 'Manager'
+),
+-- 🔹 Personas que han salido (por tipo)
+salidas_fulfillment AS (
+    SELECT
+        COUNT(*) FILTER (WHERE status ILIKE '%voluntario%') AS Voluntario,
+        COUNT(*) FILTER (WHERE status ILIKE '%despido%') AS Despido
+    FROM sheets_ingresos_y_retiros sir
+    WHERE department = 'Operations'
+      AND team = 'Fulfillment'
+      AND role <> 'Manager'
+      AND status <> 'Activo'
+),
+-- 🔹 Periodo de datos dinámico
+periodo_datos AS (
+    SELECT
+        TO_CHAR(MIN(mes), 'Mon YYYY') || ' - ' || TO_CHAR(MAX(mes), 'Mon YYYY') AS periodo
+    FROM base
+)
+-- 🔹 Selección final
+SELECT
+	pd.periodo,   
+	c.total_new_menu_done,
+    c.total_update_done,
+    pm.promedio_mes,
+    m.mes_mas_menus,
+    m.total_menus_mes_top,
+    w.semana_mas_menus,
+    w.total_menus_week_top,
+    d.dia_mas_menus,
+    d.total_menus_dia_top,
+    p.assigne_name AS persona_top,
+    p.total_menus_persona_top AS total_persona_top,
+    (s.Voluntario + s.Despido) AS total_rotation,
+    s.Voluntario,
+    s.Despido,
+    mgr.manager_name AS manager,
+    tf.total_team
+FROM conteos c
+CROSS JOIN persona_top p
+LEFT JOIN managers mgr
+    ON mgr.team = 'Fulfillment'
+CROSS JOIN promedio_mes pm
+CROSS JOIN mes_top m
+CROSS JOIN week_top w
+CROSS JOIN dia_top d
+CROSS JOIN salidas_fulfillment s
+CROSS JOIN team_fulfillment tf
+CROSS JOIN periodo_datos pd;
     """
 
     cur.execute(query)
@@ -159,7 +215,8 @@ def obtener_resumen_installations():
         TRIM(section_name)    AS section_name,
         completed,
         (completed_at - INTERVAL '5 hours')::date AS fecha,
-        DATE_TRUNC('month', completed_at - INTERVAL '5 hours')::date AS mes
+        DATE_TRUNC('month', completed_at - INTERVAL '5 hours')::date AS mes,
+        DATE_TRUNC('week', completed_at - INTERVAL '5 hours')::date AS semana
     FROM asana_installations_task ait
     WHERE completed_at IS NOT NULL
       AND DATE_TRUNC('year', completed_at - INTERVAL '5 hours') >= DATE '2025-01-01'
@@ -185,6 +242,16 @@ total_instaladas AS (
     WHERE section_name = 'Installed'
       AND completed = true
 ),
+-- 🔹 Total In Progress
+total_in_progress AS (
+    SELECT COUNT(DISTINCT gid) AS total_in_progress
+    FROM asana_installations_task
+    WHERE section_name IN (
+        'Pending Shipment', 'Shipped (DEN)', 'Pending',
+        'Arrived', 'First Contact', '15-30 Days',
+        'Programada', 'Momias'
+    )
+),
 -- 🔹 Resumen mensual
 resumen_mensual AS (
     SELECT mes, COUNT(DISTINCT gid) AS instalaciones_x_mes
@@ -199,6 +266,13 @@ resumen_diario_total AS (
     WHERE section_name = 'Installed' AND completed = true
     GROUP BY fecha
 ),
+-- 🔹 Resumen semanal
+resumen_semanal AS (
+    SELECT semana, COUNT(DISTINCT gid) AS instalaciones_x_week
+    FROM base
+    WHERE section_name = 'Installed' AND completed = true
+    GROUP BY semana
+),
 -- 🔹 Promedio mensual de instalaciones
 promedio_tabletas AS (
     SELECT 
@@ -209,18 +283,31 @@ promedio_tabletas AS (
     FROM base
     WHERE section_name = 'Installed' AND completed = true
 ),
--- 🔹 Mes con más instalaciones
+-- 🔹 Mes con más instalaciones (bonito)
 mes_top AS (
-    SELECT mes, instalaciones_x_mes
+    SELECT 
+        TO_CHAR(mes, 'Mon YYYY') AS mes_mas_instalaciones,
+        instalaciones_x_mes
     FROM resumen_mensual
     ORDER BY instalaciones_x_mes DESC
     LIMIT 1
 ),
--- 🔹 Día con más instalaciones
+-- 🔹 Día con más instalaciones (bonito)
 dia_top AS (
-    SELECT fecha, instalaciones_x_dia
+    SELECT 
+        TO_CHAR(fecha, 'DD - Mon - YYYY') AS dia_mas_instalaciones,
+        instalaciones_x_dia
     FROM resumen_diario_total
     ORDER BY instalaciones_x_dia DESC
+    LIMIT 1
+),
+-- 🔹 Semana con más instalaciones (bonito)
+week_top AS (
+    SELECT 
+        TO_CHAR(semana, 'DD - Mon - YYYY') AS semana_mas_instalaciones,
+        instalaciones_x_week
+    FROM resumen_semanal
+    ORDER BY instalaciones_x_week DESC
     LIMIT 1
 ),
 -- 🔹 Persona con más instalaciones
@@ -259,36 +346,58 @@ managers AS (
       AND team = 'Google Integration'
       AND role LIKE('%Manager%')
 ),
--- 🔹 Total del team Product Launch
-total_team AS (
-    SELECT COUNT(*) AS total_team
+-- 🔹 Totales del team Product Launch
+team_info AS (
+    SELECT
+        COUNT(*) FILTER (WHERE status = 'Activo') AS total_activos,
+        COUNT(*) FILTER (WHERE status <> 'Activo') AS total_no_activos,
+        COUNT(*) FILTER (WHERE status ILIKE '%voluntario%') AS total_voluntarios,
+        COUNT(*) FILTER (WHERE status ILIKE '%despido%') AS total_despidos
     FROM sheets_ingresos_y_retiros sir
     WHERE department = 'Operations'
       AND team = 'Product Launch'
+      AND role <> 'Manager'
+),
+-- 🔹 Periodo dinámico
+periodo_datos AS (
+    SELECT 
+        TO_CHAR(MIN(mes), 'Mon YYYY') || ' - ' || TO_CHAR(MAX(mes), 'Mon YYYY') AS periodo
+    FROM base
 )
-SELECT
+-- 🔹 Resultado final
+select
+	pd.periodo                          AS periodo,
     ti.total_instaladas                 AS total_installed,
-    TO_CHAR(mes_top.mes,'YYYY-MM')      AS mes_top,
-    mes_top.instalaciones_x_mes         AS total_mes_top,
-    dia_top.fecha                       AS day_top,
-    dia_top.instalaciones_x_dia         AS total_day_top,
-    persona_overall.assigne_name        AS persona_top,
-    persona_overall.total_instalaciones AS total_persona_top,
+    tip.total_in_progress               AS total_in_progress,
+    pt.promedio_tabletas_mensual        AS avg_mes,
+    m.mes_mas_instalaciones             AS mes_top,
+    m.instalaciones_x_mes               AS total_mes_top,
+    w.semana_mas_instalaciones          AS week_top,
+    w.instalaciones_x_week              AS total_week_top,
+    d.dia_mas_instalaciones             AS day_top,
+    d.instalaciones_x_dia               AS total_day_top,
     td.total_denegadas                  AS total_denied,
     mt.denied_reason                    AS common_reason,
     mt.total_motivo                     AS total_reason,
+    persona_overall.assigne_name        AS persona_top,
+    persona_overall.total_instalaciones AS total_persona_top,
+    tii.total_no_activos                AS total_rotation,
+    tii.total_voluntarios               AS voluntario,
+    tii.total_despidos                  AS despido,
     mgr.manager_name                    AS manager,
-    tt.total_team                       AS total_team,
-    pt.promedio_tabletas_mensual        AS avg_mes
+    tii.total_activos					AS total_team
 FROM total_instaladas ti
-CROSS JOIN mes_top
-CROSS JOIN dia_top
+CROSS JOIN total_in_progress tip
+CROSS JOIN mes_top m
+CROSS JOIN dia_top d
+CROSS JOIN week_top w
 CROSS JOIN persona_overall
 CROSS JOIN total_denegadas td
 CROSS JOIN motivo_top mt
 LEFT JOIN managers mgr ON mgr.team = 'Google Integration'
-CROSS JOIN total_team tt
-CROSS JOIN promedio_tabletas pt;
+CROSS JOIN team_info tii
+CROSS JOIN promedio_tabletas pt
+CROSS JOIN periodo_datos pd;
     """
     
     cur.execute(query)
