@@ -155,7 +155,8 @@ salidas_fulfillment AS (
 -- 🔹 Periodo de datos dinámico
 periodo_datos AS (
     SELECT
-        TO_CHAR(MIN(mes), 'Mon YYYY') || ' - ' || TO_CHAR(MAX(mes), 'Mon YYYY') AS periodo
+        TO_CHAR(MIN(mes), 'Mon YYYY') || ' - ' ||
+        TO_CHAR((CURRENT_TIMESTAMP - INTERVAL '5 hours')::date, 'DD Mon YYYY') AS periodo
     FROM base
 )
 -- 🔹 Selección final
@@ -360,8 +361,9 @@ team_info AS (
 ),
 -- 🔹 Periodo dinámico
 periodo_datos AS (
-    SELECT 
-        TO_CHAR(MIN(mes), 'Mon YYYY') || ' - ' || TO_CHAR(MAX(mes), 'Mon YYYY') AS periodo
+    SELECT
+        TO_CHAR(MIN(mes), 'Mon YYYY') || ' - ' ||
+        TO_CHAR((CURRENT_TIMESTAMP - INTERVAL '5 hours')::date, 'DD Mon YYYY') AS periodo
     FROM base
 )
 -- 🔹 Resultado final
@@ -400,6 +402,187 @@ CROSS JOIN promedio_tabletas pt
 CROSS JOIN periodo_datos pd;
     """
     
+    cur.execute(query)
+    row = cur.fetchone()
+    columns = [desc[0] for desc in cur.description]
+    result = dict(zip(columns, row))
+
+    cur.close()
+    conn.close()
+    return result
+
+# 🚀 Nuevo endpoint: resumen QA
+@app.get("/resumen_qa")
+def obtener_resumen_qa():
+    conn = get_connection()
+    cur = conn.cursor()
+
+    query = """
+WITH base AS (
+    SELECT
+        gid,
+        TRIM(assigne_name)        AS assigne_name,
+        TRIM(section_name)        AS section_name,
+        completed,
+        TRIM(reason_pause)        AS reason_pause,
+        TRIM(reason_lost)         AS reason_lost,
+        (COALESCE(created_at, completed_at) - INTERVAL '5 hours')::date AS fecha_ref,
+        DATE_TRUNC('month', COALESCE(created_at, completed_at) - INTERVAL '5 hours')::date AS mes,
+        DATE_TRUNC('week',  COALESCE(created_at, completed_at) - INTERVAL '5 hours')::date AS semana
+    FROM asana_qa_task aqt
+    WHERE DATE_TRUNC('year', COALESCE(created_at, completed_at) - INTERVAL '5 hours') = DATE '2025-01-01'
+),
+--Totales generales
+totales AS (
+    SELECT
+        COUNT(DISTINCT CASE WHEN section_name = 'Approved' THEN gid END) AS total_approved,
+        COUNT(DISTINCT CASE WHEN section_name = 'In Progress' THEN gid END) AS total_in_progress,
+        COUNT(DISTINCT CASE WHEN section_name = 'Paused' THEN gid END) AS total_paused,
+        COUNT(DISTINCT CASE WHEN section_name = 'Rejected' THEN gid END) AS total_rejected
+    FROM base
+),
+--Persona con más tareas
+top_persona AS (
+    SELECT
+        assigne_name,
+        COUNT(DISTINCT gid) AS total_tareas_persona
+    FROM base
+    WHERE assigne_name IS NOT NULL AND TRIM(assigne_name) <> '' AND section_name = 'Approved'
+    GROUP BY assigne_name
+    ORDER BY total_tareas_persona DESC
+    LIMIT 1
+),
+--Razón más común de pausa
+razon_pausa AS (
+    SELECT
+        reason_pause,
+        COUNT(DISTINCT gid) AS total_por_razon
+    FROM base
+    WHERE section_name = 'Paused'
+      AND reason_pause IS NOT NULL
+      AND TRIM(reason_pause) <> ''
+    GROUP BY reason_pause
+    ORDER BY total_por_razon DESC
+    LIMIT 1
+),
+--Razón más común de lost
+razon_lost AS (
+    SELECT
+        reason_lost,
+        COUNT(DISTINCT gid) AS total_reason_lost
+    FROM base
+    WHERE section_name = 'Rejected'
+      AND reason_lost IS NOT NULL
+      AND TRIM(reason_lost) <> ''
+    GROUP BY reason_lost
+    ORDER BY total_reason_lost DESC
+    LIMIT 1
+),
+--Mes con más tareas Approved
+mes_top AS (
+    SELECT
+        TO_CHAR(mes, 'Mon YYYY') AS mes_mas_approved,
+        COUNT(DISTINCT gid) AS total_mes_top
+    FROM base
+    WHERE section_name = 'Approved'
+    GROUP BY mes
+    ORDER BY total_mes_top DESC
+    LIMIT 1
+),
+--Semana con más tareas Approved
+semana_top AS (
+    SELECT
+        TO_CHAR(semana, 'DD Mon YYYY') AS semana_mas_approved,
+        COUNT(DISTINCT gid) AS total_semana_top
+    FROM base
+    WHERE section_name = 'Approved'
+    GROUP BY semana
+    ORDER BY total_semana_top DESC
+    LIMIT 1
+),
+--Día con más tareas Approved
+dia_top AS (
+    SELECT
+        TO_CHAR(fecha_ref, 'DD Mon YYYY') AS dia_mas_approved,
+        COUNT(DISTINCT gid) AS total_dia_top
+    FROM base
+    WHERE section_name = 'Approved'
+    GROUP BY fecha_ref
+    ORDER BY total_dia_top DESC
+    LIMIT 1
+),
+--Periodo de datos dinámico
+periodo_datos AS (
+    SELECT
+        TO_CHAR(MIN(mes), 'Mon YYYY') || ' - ' ||
+        TO_CHAR((CURRENT_TIMESTAMP - INTERVAL '5 hours')::date, 'DD Mon YYYY') AS period
+    FROM base
+),
+--Manager info
+managers AS (
+    SELECT
+        sir.name AS manager,
+        sir.team,
+        sir.department,
+        sir.role
+    FROM sheets_ingresos_y_retiros sir
+    WHERE department = 'Operations'
+      AND team = 'Quality Assurance'
+      AND role LIKE('%Manager%')
+),
+--Total equipo QA activo
+team_qa AS (
+    SELECT COUNT(*) AS total_team
+    FROM sheets_ingresos_y_retiros sir
+    WHERE department = 'Operations'
+      AND team = 'Quality Assurance'
+      AND status = 'Activo'
+      AND role <> 'Manager'
+),
+--Rotación QA
+rotation AS (
+    SELECT
+        COUNT(*) FILTER (WHERE status ILIKE '%voluntario%') AS voluntario,
+        COUNT(*) FILTER (WHERE status ILIKE '%despido%') AS despido
+    FROM sheets_ingresos_y_retiros sir
+    WHERE department = 'Operations'
+      AND team = 'Quality Assurance'
+      AND role <> 'Manager'
+      AND status <> 'Activo'
+)
+SELECT
+    per.period,
+    t.*,
+    m.mes_mas_approved       AS top_month_name,
+    m.total_mes_top          AS top_month_total,
+    s.semana_mas_approved    AS top_week_name,
+    s.total_semana_top       AS top_week_total,
+    d.dia_mas_approved       AS top_day_name,
+    d.total_dia_top          AS top_day_total,
+    p.assigne_name           AS top_person_name,
+    p.total_tareas_persona   AS top_person_total,
+    r.reason_pause           AS common_paused_reason,
+    r.total_por_razon        AS total_reason_paused,
+    rl.reason_lost           AS common_rejected_reason,
+    rl.total_reason_lost     AS total_reason_rejected,
+    (rot.voluntario + rot.despido) AS total_rotation,
+    rot.voluntario           AS voluntary,
+    rot.despido              AS dismissal,
+    man.manager,
+    tq.total_team            AS total_team
+FROM totales t
+LEFT JOIN top_persona p     ON true
+LEFT JOIN razon_pausa r     ON true
+LEFT JOIN razon_lost rl     ON true
+LEFT JOIN mes_top m         ON true
+LEFT JOIN semana_top s      ON true
+LEFT JOIN dia_top d         ON true
+LEFT JOIN periodo_datos per ON true
+LEFT JOIN managers man      ON true
+LEFT JOIN team_qa tq        ON true
+LEFT JOIN rotation rot      ON true;
+    """
+
     cur.execute(query)
     row = cur.fetchone()
     columns = [desc[0] for desc in cur.description]
