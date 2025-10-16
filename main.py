@@ -591,3 +591,176 @@ LEFT JOIN rotation rot      ON true;
     cur.close()
     conn.close()
     return result
+
+# 🚀 Nuevo endpoint: resumen Deal Creation
+@app.get("/resumen_dealcreation")
+def obtener_resumen_qa():
+    conn = get_connection()
+    cur = conn.cursor()
+
+    query = """
+WITH 
+-- 🔹 Base para tareas DONE (usa completed_at)
+base_done AS (
+    SELECT
+        gid,
+        TRIM(assigne_name) AS assigne_name,
+        TRIM(section_name) AS section_name,
+        completed,
+        (completed_at - INTERVAL '5 hours')::date AS fecha_ref,
+        DATE_TRUNC('month', completed_at - INTERVAL '5 hours')::date AS mes,
+        DATE_TRUNC('week',  completed_at - INTERVAL '5 hours')::date AS semana
+    FROM asana_dealcreation_task adc
+    WHERE section_name ='Done'
+      AND completed_at IS NOT NULL
+      AND DATE_TRUNC('year', completed_at - INTERVAL '5 hours') = DATE '2025-01-01'
+),
+-- 🔹 Base para tareas en progreso o no finalizadas (usa created_at)
+base_in_progress AS (
+    SELECT
+        gid,
+        TRIM(assigne_name) AS assigne_name,
+        TRIM(section_name) AS section_name,
+        completed,
+        (created_at - INTERVAL '5 hours')::date AS fecha_ref,
+        DATE_TRUNC('month', created_at - INTERVAL '5 hours')::date AS mes,
+        DATE_TRUNC('week',  created_at - INTERVAL '5 hours')::date AS semana
+    FROM asana_dealcreation_task adc
+    WHERE section_name in ('Unassigned','Loading Page','In Progress','Paused')
+      AND created_at IS NOT NULL
+      AND DATE_TRUNC('year', created_at - INTERVAL '5 hours') = DATE '2025-01-01'
+),
+-- 🔹 Unión final de bases
+base AS (
+    SELECT * FROM base_done
+    UNION ALL
+    SELECT * FROM base_in_progress
+),
+-- 🔹 Totales generales
+totales AS (
+    SELECT
+        COUNT(DISTINCT CASE WHEN section_name = 'Done' THEN gid END) AS total_done,
+        COUNT(DISTINCT CASE WHEN section_name IN ('Unassigned','Loading Page','In Progress') THEN gid END) AS total_in_progress,
+        COUNT(DISTINCT CASE WHEN section_name = 'Paused' THEN gid END) AS total_paused
+    FROM base
+),
+-- 🔹 Persona con más tareas Done
+top_persona AS (
+    SELECT
+        assigne_name,
+        COUNT(DISTINCT gid) AS total_tareas_persona
+    FROM base
+    WHERE assigne_name IS NOT NULL AND TRIM(assigne_name) <> '' 
+      AND section_name = 'Done'
+    GROUP BY assigne_name
+    ORDER BY total_tareas_persona DESC
+    LIMIT 1
+),
+-- 🔹 Mes con más tareas Done
+mes_top AS (
+    SELECT
+        TO_CHAR(mes, 'Mon YYYY') AS mes_mas_approved,
+        COUNT(DISTINCT gid) AS total_mes_top
+    FROM base
+    WHERE section_name = 'Done'
+    GROUP BY mes
+    ORDER BY total_mes_top DESC
+    LIMIT 1 
+),
+-- 🔹 Semana con más tareas Done
+semana_top AS (
+    SELECT
+        TO_CHAR(semana, 'DD Mon YYYY') AS semana_mas_approved,
+        COUNT(DISTINCT gid) AS total_semana_top
+    FROM base
+    WHERE section_name = 'Done'
+    GROUP BY semana
+    ORDER BY total_semana_top DESC
+    LIMIT 1
+),
+-- 🔹 Día con más tareas Done
+dia_top AS (
+    SELECT
+        TO_CHAR(fecha_ref, 'DD Mon YYYY') AS dia_mas_approved,
+        COUNT(DISTINCT gid) AS total_dia_top
+    FROM base
+    WHERE section_name = 'Done'
+    GROUP BY fecha_ref
+    ORDER BY total_dia_top DESC
+    LIMIT 1
+),
+-- 🔹 Periodo de datos dinámico
+periodo_datos AS (
+    SELECT
+        TO_CHAR(MIN(mes), 'Mon YYYY') || ' - ' ||
+        TO_CHAR((CURRENT_TIMESTAMP - INTERVAL '5 hours')::date, 'DD Mon YYYY') AS period
+    FROM base
+),
+-- 🔹 Managers (referencia externa)
+managers AS (
+    SELECT
+        sir.name AS manager,
+        sir.team,
+        sir.department,
+        sir.role
+    FROM sheets_ingresos_y_retiros sir
+    WHERE department = 'Operations'
+      AND team = 'Business Operation'
+      AND role LIKE('%Manager%')
+),
+-- 🔹 Total equipo activo
+team_qa AS (
+    SELECT COUNT(*) AS total_team
+    FROM sheets_ingresos_y_retiros sir
+    WHERE department = 'Operations'
+      AND team = 'Business Operation'
+      AND status = 'Activo'
+      AND role = 'System Specialist'
+),
+-- 🔹 Rotación
+rotation AS (
+    SELECT
+        COUNT(*) FILTER (WHERE status ILIKE '%voluntario%') AS voluntario,
+        COUNT(*) FILTER (WHERE status ILIKE '%despido%') AS despido
+    FROM sheets_ingresos_y_retiros sir
+    WHERE department = 'Operations'
+      AND team = 'Business Operation'
+      AND role = 'System Specialist'
+      AND status <> 'Activo'
+)
+-- 🔹 Resultado final
+SELECT
+    per.period,
+    t.*,
+    m.mes_mas_approved AS top_month_name,
+    m.total_mes_top AS top_month_total,
+    s.semana_mas_approved AS top_week_name,
+    s.total_semana_top AS top_week_total,
+    d.dia_mas_approved AS top_day_name,
+    d.total_dia_top AS top_day_total,
+    p.assigne_name AS top_person_name,
+    p.total_tareas_persona AS top_person_total,
+    (rot.voluntario + rot.despido) AS total_rotation,
+    rot.voluntario AS voluntary,
+    rot.despido AS dismissal,
+    man.manager,
+    tq.total_team AS total_team
+FROM totales t
+LEFT JOIN top_persona p ON true
+LEFT JOIN mes_top m ON true
+LEFT JOIN semana_top s ON true
+LEFT JOIN dia_top d ON true
+LEFT JOIN periodo_datos per ON true
+LEFT JOIN managers man ON true
+LEFT JOIN team_qa tq ON true
+LEFT JOIN rotation rot ON true;
+    """
+
+    cur.execute(query)
+    row = cur.fetchone()
+    columns = [desc[0] for desc in cur.description]
+    result = dict(zip(columns, row))
+
+    cur.close()
+    conn.close()
+    return result
