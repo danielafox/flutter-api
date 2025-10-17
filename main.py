@@ -207,7 +207,7 @@ def obtener_resumen_installations():
     cur = conn.cursor()
     
     query = """
-    WITH base AS (
+WITH base AS (
     SELECT
         gid,
         TRIM(assigne_name)    AS assigne_name,
@@ -222,7 +222,6 @@ def obtener_resumen_installations():
     WHERE completed_at IS NOT NULL
       AND DATE_TRUNC('year', completed_at - INTERVAL '5 hours') >= DATE '2025-01-01'
 ),
--- 🔹 Base separada para Denied (usa created_at)
 base_denied AS (
     SELECT
         gid,
@@ -236,14 +235,11 @@ base_denied AS (
     WHERE section_name = 'Denied'
       AND DATE_TRUNC('year', created_at - INTERVAL '5 hours') >= DATE '2025-01-01'
 ),
--- 🔹 Total instaladas
 total_instaladas AS (
     SELECT COUNT(DISTINCT gid) AS total_instaladas
     FROM base
-    WHERE section_name = 'Installed'
-      AND completed = true
+    WHERE section_name = 'Installed' AND completed = true
 ),
--- 🔹 Total In Progress
 total_in_progress AS (
     SELECT COUNT(DISTINCT gid) AS total_in_progress
     FROM asana_installations_task
@@ -253,28 +249,24 @@ total_in_progress AS (
         'Programada', 'Momias'
     )
 ),
--- 🔹 Resumen mensual
 resumen_mensual AS (
     SELECT mes, COUNT(DISTINCT gid) AS instalaciones_x_mes
     FROM base
     WHERE section_name = 'Installed' AND completed = true
     GROUP BY mes
 ),
--- 🔹 Resumen diario
 resumen_diario_total AS (
     SELECT fecha, COUNT(DISTINCT gid) AS instalaciones_x_dia
     FROM base
     WHERE section_name = 'Installed' AND completed = true
     GROUP BY fecha
 ),
--- 🔹 Resumen semanal
 resumen_semanal AS (
     SELECT semana, COUNT(DISTINCT gid) AS instalaciones_x_week
     FROM base
     WHERE section_name = 'Installed' AND completed = true
     GROUP BY semana
 ),
--- 🔹 Promedio mensual de instalaciones
 promedio_tabletas AS (
     SELECT 
         ROUND(
@@ -284,7 +276,6 @@ promedio_tabletas AS (
     FROM base
     WHERE section_name = 'Installed' AND completed = true
 ),
--- 🔹 Mes con más instalaciones (bonito)
 mes_top AS (
     SELECT 
         TO_CHAR(mes, 'Mon YYYY') AS mes_mas_instalaciones,
@@ -293,7 +284,6 @@ mes_top AS (
     ORDER BY instalaciones_x_mes DESC
     LIMIT 1
 ),
--- 🔹 Día con más instalaciones (bonito)
 dia_top AS (
     SELECT 
         TO_CHAR(fecha, 'DD - Mon - YYYY') AS dia_mas_instalaciones,
@@ -302,7 +292,6 @@ dia_top AS (
     ORDER BY instalaciones_x_dia DESC
     LIMIT 1
 ),
--- 🔹 Semana con más instalaciones (bonito)
 week_top AS (
     SELECT 
         TO_CHAR(semana, 'DD - Mon - YYYY') AS semana_mas_instalaciones,
@@ -311,7 +300,6 @@ week_top AS (
     ORDER BY instalaciones_x_week DESC
     LIMIT 1
 ),
--- 🔹 Persona con más instalaciones
 persona_overall AS (
     SELECT assigne_name, COUNT(DISTINCT gid) AS total_instalaciones
     FROM base
@@ -321,12 +309,10 @@ persona_overall AS (
     ORDER BY total_instalaciones DESC
     LIMIT 1
 ),
--- 🔹 Total denegadas
 total_denegadas AS (
     SELECT COUNT(DISTINCT gid) AS total_denegadas
     FROM base_denied
 ),
--- 🔹 Motivo más común en denegadas
 motivo_top AS (
     SELECT denied_reason, COUNT(DISTINCT gid) AS total_motivo
     FROM base_denied
@@ -335,7 +321,6 @@ motivo_top AS (
     ORDER BY total_motivo DESC
     LIMIT 1
 ),
--- 🔹 Managers de Google Integration
 managers AS (
     SELECT
         sir.name AS manager_name,
@@ -347,7 +332,6 @@ managers AS (
       AND team = 'Google Integration'
       AND role LIKE('%Manager%')
 ),
--- 🔹 Totales del team Product Launch
 team_info AS (
     SELECT
         COUNT(*) FILTER (WHERE status = 'Activo') AS total_activos,
@@ -359,14 +343,24 @@ team_info AS (
       AND team = 'Product Launch'
       AND role <> 'Manager'
 ),
--- 🔹 Periodo dinámico
 periodo_datos AS (
     SELECT
         TO_CHAR(MIN(mes), 'Mon YYYY') || ' - ' ||
         TO_CHAR((CURRENT_TIMESTAMP - INTERVAL '5 hours')::date, 'DD Mon YYYY') AS periodo
     FROM base
+),
+-- 🔹 País con más instalaciones
+country_top AS (
+    SELECT 
+        country AS top_country,
+        COUNT(DISTINCT gid) AS total_tablets_country
+    FROM base
+    WHERE section_name = 'Installed' AND completed = true
+      AND country IS NOT NULL
+    GROUP BY country
+    ORDER BY total_tablets_country DESC
+    LIMIT 1
 )
--- 🔹 Resultado final
 SELECT
     pd.periodo                             AS period,
     ti.total_instaladas                    AS total_installed,
@@ -383,6 +377,8 @@ SELECT
     mt.total_motivo                        AS total_reason_count,
     persona_overall.assigne_name           AS top_person_name,
     persona_overall.total_instalaciones    AS top_person_total,
+    ct.top_country                         AS top_country,
+    ct.total_tablets_country               AS top_country_total,
     tii.total_no_activos                   AS total_rotation,
     tii.total_voluntarios                  AS voluntary,
     tii.total_despidos                     AS dismissal,
@@ -396,6 +392,7 @@ CROSS JOIN week_top w
 CROSS JOIN persona_overall
 CROSS JOIN total_denegadas td
 CROSS JOIN motivo_top mt
+CROSS JOIN country_top ct
 LEFT JOIN managers mgr ON mgr.team = 'Google Integration'
 CROSS JOIN team_info tii
 CROSS JOIN promedio_tabletas pt
